@@ -454,13 +454,8 @@ def asyncFinishThread(server):
 			if isDomain(server["address"]):
 				err += " (valid: %s)" % " ".join(addresses)
 			app.logger.warning(err)
-			if isDomain(server["address"]):
-				# handle as warning
-				err += "\nThis will become a strict requirement in Nov 2024. You may have to set bind_address."
-				errorTracker.put(getErrorPK(server), (True, err))
-			else:
-				errorTracker.put(getErrorPK(server), (False, err))
-				return
+			# handle as warning
+			errorTracker.put(getErrorPK(server), (True, err))
 
 	geo = geoip_lookup_continent(info[-1][4][0])
 	if geo:
