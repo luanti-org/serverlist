@@ -100,94 +100,69 @@ def announce():
 	if ip in app.config["BANNED_IPS"]:
 		return "Banned (IP).", 403
 
-	data = request.form["json"]
-
-	if len(data) > 8192:
+	json_data = request.form["json"]
+	if len(json_data) > 8192:
 		return "JSON data is too big.", 413
 
 	try:
-		server = json.loads(data)
+		req = json.loads(json_data)
 	except json.JSONDecodeError:
 		return "Unable to process JSON data.", 400
 
-	if not isinstance(server, dict):
+	if not isinstance(req, dict):
 		return "JSON data is not an object.", 400
 
-	action = server.get("action")
+	action = req.pop("action", "")
 	if action not in ("start", "update", "delete"):
 		return "Invalid action field.", 400
 
-	server["ip"] = ip
+	req["ip"] = ip
 
-	if not "port" in server:
-		server["port"] = 30000
+	if not "port" in req:
+		req["port"] = 30000
 	#### Compatibility code ####
 	# port was sent as a string instead of an integer
-	elif isinstance(server["port"], str):
-		server["port"] = int(server["port"])
+	elif isinstance(req["port"], str):
+		req["port"] = int(req["port"])
 	#### End compatibility code ####
 
-	if "%s/%d" % (server["ip"], server["port"]) in app.config["BANNED_SERVERS"]:
+	if "%s/%d" % (req["ip"], req["port"]) in app.config["BANNED_SERVERS"]:
 		return "Banned (Server).", 403
-	elif "address" in server and "%s/%d" % (server["address"].lower(), server["port"]) in app.config["BANNED_SERVERS"]:
+	elif "address" in req and "%s/%d" % (req["address"].lower(), req["port"]) in app.config["BANNED_SERVERS"]:
 		return "Banned (Server).", 403
-	elif "address" in server and server["address"].lower() in app.config["BANNED_SERVERS"]:
+	elif "address" in req and req["address"].lower() in app.config["BANNED_SERVERS"]:
 		return "Banned (Server).", 403
 
-	old = serverList.get(ip, server["port"])
+	old = serverList.get(ip, req["port"])
 
 	if action == "delete":
 		if not old:
 			return "Server not found."
 		serverList.remove(old)
-		serverList.save()
 		return "Removed from server list."
-	elif not checkRequestSchema(server):
+
+	if not checkRequestSchema(req):
 		return "JSON data does not conform to schema.", 400
-	elif not checkRequest(server):
+	elif not checkRequest(req):
 		return "Incorrect JSON data.", 400
 
 	if action == "update" and not old:
-		if app.config["ALLOW_UPDATE_WITHOUT_OLD"]:
+		if app.config["ALLOW_UPDATE_WITHOUT_OLD"] and req["uptime"] > 0:
 			action = "start"
 		else:
 			return "Server to update not found."
 
+	server = Server.from_request(req)
+
 	# Since 'address' isn't the primary key it can change
-	if action == "start" or old.get("address") != server.get("address"):
+	if action == "start" or old.address != server.address:
 		err = checkRequestAddress(server)
 		if err:
 			return ADDR_ERROR_HELP_TEXTS[err], 400
 
-	server["update_time"] = int(time.time())
+	server.track_update(old, action == "update")
 
-	if action == "start":
-		server["uptime"] = 0
-		server["start"] = int(time.time())
-	else:
-		server["start"] = old["start"]
-
-	server["clients_top"] = max(server["clients"], old["clients_top"]) if old else server["clients"]
-
-	# Make sure that startup options are saved
-	if action == "update":
-		for field in ("dedicated", "rollback", "mapgen", "privs",
-				"can_see_far_names", "mods"):
-			if field in old:
-				server[field] = old[field]
-
-	# Popularity
-	if old:
-		server["updates"] = old["updates"] + 1
-		# This is actually a count of all the client numbers we've received,
-		# it includes clients that were on in the previous update.
-		server["total_clients"] = old["total_clients"] + server["clients"]
-	else:
-		server["updates"] = 1
-		server["total_clients"] = server["clients"]
-	server["pop_v"] = server["total_clients"] / server["updates"]
-
-	err = errorTracker.get(getErrorPK(server))
+	err = errorTracker.get(server.get_error_pk())
 
 	finishRequestAsync(server)
 
@@ -204,15 +179,18 @@ def announce():
 
 # Utilities
 
-# returns a primary key suitable for saving and replaying an error unique to a
-# server that was announced.
-def getErrorPK(server):
-	# some failures depend on the client IP too
-	return(server["ip"], server["address"], server["port"])
-
 # check if something is a domain name (approximate)
 def isDomain(s):
 	return "." in s and s.rpartition(".")[2][0].isalpha()
+
+# Safely writes JSON data to a file
+def dumpJsonToFile(filename, data):
+	with open(filename + "~", "w", encoding="utf-8") as fd:
+		json.dump(data, fd,
+			indent = "\t" if app.config["DEBUG"] else None,
+			separators = (',', ': ') if app.config["DEBUG"] else (',', ':')
+		)
+	os.replace(filename + "~", filename)
 
 # Returns ping time in seconds (up), False (down), or None (error).
 def serverUp(info):
@@ -266,7 +244,7 @@ def serverUp(info):
 
 
 def checkRequestAddress(server):
-	name = server["address"].lower()
+	name = server.address.lower()
 
 	# example value from minetest.conf
 	EXAMPLE_TLDS = (".example.com", ".example.net", ".example.org")
@@ -309,8 +287,6 @@ def checkRequestAddress(server):
 
 # fieldName: (Required, Type, SubType)
 fields = {
-	"action": (True, "str"),
-
 	"address": (False, "str"),
 	"port": (False, "int"),
 
@@ -344,74 +320,74 @@ fields = {
 	"can_see_far_names": (False, "bool"),
 }
 
-def checkRequestSchema(server):
+def checkRequestSchema(req):
 	for name, data in fields.items():
-		if not name in server:
+		if not name in req:
 			if data[0]:
 				return False
 			continue
 		#### Compatibility code ####
-		if isinstance(server[name], str):
+		if isinstance(req[name], str):
 			# Accept strings in boolean fields but convert it to a
 			# boolean, because old servers sent some booleans as strings.
 			if data[1] == "bool":
-				server[name] = server[name].lower() in ("true", "1")
+				req[name] = req[name].lower() in ("true", "1")
 				continue
 			# Accept strings in integer fields but convert it to an
 			# integer, for interoperability with e.g. core.write_json().
 			if data[1] == "int":
-				server[name] = int(server[name])
+				req[name] = int(req[name])
 				continue
 		#### End compatibility code ####
-		if type(server[name]).__name__ != data[1]:
+		if type(req[name]).__name__ != data[1]:
 			return False
 		if len(data) >= 3:
-			for item in server[name]:
+			for item in req[name]:
 				if type(item).__name__ != data[2]:
 					return False
 	return True
 
-def checkRequest(server):
+def checkRequest(req):
 	# check numbers
 	for field in ("clients", "clients_max", "uptime", "game_time", "lag", "proto_min", "proto_max"):
-		if field in server and server[field] < 0:
+		if field in req and req[field] < 0:
 			return False
 
-	if server["proto_min"] > server["proto_max"]:
+	if req["proto_min"] > req["proto_max"]:
 		return False
 
 	BAD_CHARS = " \t\v\r\n\x00\x27"
 
 	# URL must be absolute and http(s)
-	if "url" in server:
-		url = server["url"]
+	if "url" in req:
+		url = req["url"]
 		if not url or not any(url.startswith(p) for p in ["http://", "https://"]) or \
 			any(c in url for c in BAD_CHARS):
-			del server["url"]
+			del req["url"]
 
 	# reject funny business in client or mod list
-	if "clients_list" in server:
-		server["clients"] = len(server["clients_list"])
-		for val in server["clients_list"]:
+	if "clients_list" in req:
+		req["clients"] = len(req["clients_list"])
+		for val in req["clients_list"]:
 			if not val or any(c in val for c in BAD_CHARS):
 				return False
 
-	if "mods" in server:
-		for val in server["mods"]:
+	if "mods" in req:
+		for val in req["mods"]:
 			if not val or any(c in val for c in BAD_CHARS):
 				return False
 
 	# sanitize some text
 	for field in ("gameid", "mapgen", "version", "privs"):
-		if field in server:
-			s = server[field]
+		if field in req:
+			s = req[field]
 			for c in BAD_CHARS:
 				s = s.replace(c, "")
-			server[field] = s
+			req[field] = s
 
 	# default value
-	if "address" not in server or not server["address"]:
-		server["address"] = server["ip"]
+	if "address" not in req or not req["address"]:
+		req["address"] = req["ip"]
 
 	return True
 
@@ -423,63 +399,159 @@ def finishRequestAsync(server):
 	th.start()
 
 
-def asyncFinishThread(server):
-	checkAddress = server["ip"] != server["address"]
-	errorTracker.remove(getErrorPK(server))
+def asyncFinishThread(server: 'Server'):
+	checkAddress = server.ip != server.address
+	errorTracker.remove(server.get_error_pk())
 
 	try:
-		info = socket.getaddrinfo(server["address"],
-			server["port"],
+		info = socket.getaddrinfo(server.address,
+			server.port,
 			type=socket.SOCK_DGRAM,
 			proto=socket.SOL_UDP)
 	except socket.gaierror:
-		err = "Unable to get address info for %s" % server["address"]
+		err = "Unable to get address info for %s" % server.address
 		app.logger.warning(err)
-		errorTracker.put(getErrorPK(server), (False, err))
+		errorTracker.put(server.get_error_pk(), (False, err))
 		return
 
 	if checkAddress:
 		addresses = set(data[4][0] for data in info)
 		have_v4 = any(d[0] == socket.AF_INET for d in info)
 		have_v6 = any(d[0] == socket.AF_INET6 for d in info)
-		if server["ip"] in addresses:
+		if server.ip in addresses:
 			pass
-		elif (":" in server["ip"] and not have_v6) or ("." in server["ip"] and not have_v4):
+		elif (":" in server.ip and not have_v6) or ("." in server.ip and not have_v4):
 			# If the client is ipv6 and there is no ipv6 on the domain (or the inverse)
 			# then the check cannot possibly ever succeed.
 			# Because this often happens accidentally just tolerate it.
 			pass
 		else:
-			err = "Requester IP %s does not match host %s" % (server["ip"], server["address"])
-			if isDomain(server["address"]):
+			err = "Requester IP %s does not match host %s" % (server.ip, server.address)
+			if isDomain(server.address):
 				err += " (valid: %s)" % " ".join(addresses)
 			app.logger.warning(err)
 			# handle as warning
-			errorTracker.put(getErrorPK(server), (True, err))
+			errorTracker.put(server.get_error_pk(), (True, err))
 
 	geo = geoip_lookup_continent(info[-1][4][0])
 	if geo:
-		server["geo_continent"] = geo
+		server.meta["geo_continent"] = geo
 
-	server["ping"] = serverUp(info[0])
-	if not server["ping"]:
-		err = "Server %s port %d did not respond to ping" % (server["address"], server["port"])
-		if isDomain(server["address"]):
+	ping = serverUp(info[0])
+	if not ping:
+		err = "Server %s port %d did not respond to ping" % (server.address, server.port)
+		if isDomain(server.address):
 			err += " (tried %s)" % info[0][4][0]
 		app.logger.warning(err)
-		errorTracker.put(getErrorPK(server), (False, err))
+		errorTracker.put(server.get_error_pk(), (False, err))
 		return
+	server.meta["ping"] = round(ping, 5)
 
 	# success!
-	del server["action"]
 	serverList.update(server)
 
 
+# represents a single server on the list
+class Server:
+	PROPS = ("startTime", "updateCount", "updateTime", "totalClients")
+
+	def __init__(self, ip: str, port: str, address: str, meta: dict):
+		# IP of announce requester (PRIMARY KEY)
+		self.ip = ip
+		# port of server (PRIMARY KEY)
+		self.port = port
+		# connectable domain or IP
+		self.address = address
+		# public metadata
+		self.meta = meta
+		# unix time of first update
+		self.startTime = 0
+		# number of updates received
+		self.updateCount = 0
+		# unix time of last update received
+		self.updateTime = 0
+		# total clients counted over all updates
+		self.totalClients = 0
+
+	# creates an instance from the data of an announce request
+	@classmethod
+	def from_request(cls, data):
+		ip = data["ip"]
+		port = data["port"]
+		address = data["address"]
+		for k in ("ip", "port", "address", "action"):
+			data.pop(k, 0)
+		return cls(ip, port, address, data)
+
+	# creates an instance from persisted data
+	@classmethod
+	def from_storage(cls, data):
+		p = data.pop()
+		obj = cls(*data)
+		for k in cls.PROPS:
+			if k in p:
+				setattr(obj, k, p[k])
+		return obj
+
+	# returns data to persist
+	def to_storage(self):
+		p = {k: getattr(self, k) for k in self.PROPS}
+		return (self.ip, self.port, self.address, self.meta, p)
+
+	# returns server dict intended for public list
+	def to_list_json(self):
+		ret = self.meta.copy()
+		ret["address"] = self.address
+		ret["port"] = self.port
+		ret["pop_v"] = self.get_average_clients()
+		return ret
+
+	# returns a primary key suitable for saving and replaying an error unique to a
+	# server that was announced.
+	def get_error_pk(self):
+		# some failures depend on the client IP too
+		return (self.ip, self.port, self.address)
+
+	def get_average_clients(self):
+		if self.updateCount:
+			return round(self.totalClients / self.updateCount)
+		return 0
+
+	def track_update(self, old: 'Server', is_update: bool):
+		# this might look a bit strange, but once a `Server` object is put into
+		# list it becomes immutable since it's under lock. So we have to copy
+		# stuff we need from the old object, and then replace it later.
+		assert old or not is_update
+		self.startTime = old.startTime if old else int(time.time())
+		self.updateTime = int(time.time())
+
+		# Make sure that startup options are saved
+		if is_update:
+			for field in ("dedicated", "rollback", "mapgen", "privs",
+					"can_see_far_names", "mods"):
+				if field in old.meta:
+					self.meta[field] = old.meta[field]
+		else:
+			self.meta["uptime"] = 0
+
+		# Popularity
+		if old:
+			self.updateCount = old.updateCount + 1
+			self.totalClients += self.meta["clients"]
+			self.meta["clients_top"] = max(self.meta["clients"], old.meta["clients_top"])
+		else:
+			self.updateCount = 1
+			self.meta["clients_top"] = self.totalClients = self.meta["clients"]
+
+# Represents an ordered list of server instances as well as methods
+# to persist it.
 class ServerList:
 	def __init__(self):
 		self.list = []
 		self.maxServers = 0
 		self.maxClients = 0
+		self.storagePath = os.path.join(app.root_path, "store.json")
+		self.publicPath = os.path.join(app.static_folder, "list.json")
 		self.lock = RLock()
 		self.load()
 		self.purgeOld()
@@ -487,7 +559,7 @@ class ServerList:
 	def getWithIndex(self, ip, port):
 		with self.lock:
 			for i, server in enumerate(self.list):
-				if server["ip"] == ip and server["port"] == port:
+				if server.ip == ip and server.port == port:
 					return (i, server)
 		return (None, None)
 
@@ -500,36 +572,39 @@ class ServerList:
 			try:
 				self.list.remove(server)
 			except ValueError:
-				pass
+				return
+			self.save()
+			self.savePublic()
 
 	def sort(self):
-		def server_points(server):
+		def server_points(server: Server):
 			points = 0
+			meta = server.meta
 
 			# 1 per client
-			points += server["clients"]
+			points += meta["clients"]
 
 			# Penalize highly loaded servers to improve player distribution.
-			cap = int(server["clients_max"] * 0.80)
-			if server["clients"] > cap:
-				points -= server["clients"] - cap
+			cap = int(meta["clients_max"] * 0.80)
+			if meta["clients"] > cap:
+				points -= meta["clients"] - cap
 
 			# 1 per month of age, limited to 8
-			points += min(8, server["game_time"] / (60*60*24*30))
+			points += min(8, meta["game_time"] / (60*60*24*30))
 
 			# 1/2 per average client, limited to 4
-			points += min(4, server["pop_v"] / 2)
+			points += min(4, server.get_average_clients() / 2)
 
 			# -8 for unrealistic max_clients
-			if server["clients_max"] > 200:
+			if meta["clients_max"] > 200:
 				points -= 8
 
 			# -8 per second of ping over 0.4s
-			if server["ping"] > 0.4:
-				points -= (server["ping"] - 0.4) * 8
+			if meta["ping"] > 0.4:
+				points -= (meta["ping"] - 0.4) * 8
 
 			# reduction to 40% for servers that support both legacy (v4) and v5 clients
-			if server["proto_min"] <= 32 and server["proto_max"] > 36:
+			if meta["proto_min"] <= 32 and meta["proto_max"] > 36:
 				points *= 0.4
 
 			return points
@@ -541,14 +616,16 @@ class ServerList:
 		cutoff = int(time.time()) - app.config["PURGE_TIME"]
 		with self.lock:
 			count = len(self.list)
-			self.list = [server for server in self.list if cutoff <= server["update_time"]]
+			self.list = [server for server in self.list if cutoff <= server.updateTime]
 			if len(self.list) < count:
 				self.save()
+				self.savePublic()
 
 	def load(self):
+		# TODO?: this is a poor man's database. maybe we should use sqlite3?
 		with self.lock:
 			try:
-				with open(os.path.join(app.static_folder, "list.json"), "r", encoding="utf-8") as fd:
+				with open(self.storagePath, "r", encoding="utf-8") as fd:
 					data = json.load(fd)
 			except FileNotFoundError:
 				return
@@ -556,36 +633,40 @@ class ServerList:
 			if not data:
 				return
 
-			self.list = data["list"]
-			self.maxServers = data["total_max"]["servers"]
-			self.maxClients = data["total_max"]["clients"]
+			self.list = list(Server.from_storage(x) for x in data["list"])
+			self.maxServers = data["maxServers"]
+			self.maxClients = data["maxClients"]
 
 	def save(self):
 		with self.lock:
+			out_list = list(server.to_storage() for server in self.list)
+			dumpJsonToFile(self.storagePath, {
+				"list": out_list,
+				"maxServers": self.maxServers,
+				"maxClients": self.maxClients
+			})
+
+	def savePublic(self):
+		with self.lock:
+			out_list = []
 			servers = len(self.list)
 			clients = 0
 			for server in self.list:
-				clients += server["clients"]
+				out_list.append(server.to_list_json())
+				clients += server.meta["clients"]
 
 			self.maxServers = max(servers, self.maxServers)
 			self.maxClients = max(clients, self.maxClients)
 
-			list_path = os.path.join(app.static_folder, "list.json")
-			with open(list_path + "~", "w", encoding="utf-8") as fd:
-				json.dump({
-						"total": {"servers": servers, "clients": clients},
-						"total_max": {"servers": self.maxServers, "clients": self.maxClients},
-						"list": self.list
-					},
-					fd,
-					indent = "\t" if app.config["DEBUG"] else None,
-					separators = (', ', ': ') if app.config["DEBUG"] else (',', ':')
-				)
-			os.replace(list_path + "~", list_path)
+			dumpJsonToFile(self.publicPath, {
+				"total": {"servers": servers, "clients": clients},
+				"total_max": {"servers": self.maxServers, "clients": self.maxClients},
+				"list": out_list
+			})
 
 	def update(self, server):
 		with self.lock:
-			i, old = self.getWithIndex(server["ip"], server["port"])
+			i, old = self.getWithIndex(server.ip, server.port)
 			if i is not None:
 				self.list[i] = server
 			else:
@@ -593,6 +674,7 @@ class ServerList:
 
 			self.sort()
 			self.save()
+			self.savePublic()
 
 
 class ErrorTracker:

@@ -1,7 +1,8 @@
 *~
 node_modules
 __pycache__
-static/list.json
-static/servers.js
-config.py
-*.mmdb
+/store.json
+/static/list.json
+/static/servers.js
+/config.py
+/*.mmdb
