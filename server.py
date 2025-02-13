@@ -632,9 +632,9 @@ class ServerList:
 			if meta["ping"] > 0.4:
 				points -= (meta["ping"] - 0.4) * 8
 
-			# reduction to 40% for servers that support both legacy (v4) and v5 clients
+			# reduction to 60% for servers that support both legacy (v4) and v5 clients
 			if meta["proto_min"] <= 32 and meta["proto_max"] > 36:
-				points *= 0.4
+				points *= 0.6
 
 			return points
 
