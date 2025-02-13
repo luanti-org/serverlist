@@ -400,7 +400,6 @@ def finishRequestAsync(server):
 
 
 def asyncFinishThread(server: 'Server'):
-	checkAddress = server.ip != server.address
 	errorTracker.remove(server.get_error_pk())
 
 	try:
@@ -414,17 +413,19 @@ def asyncFinishThread(server: 'Server'):
 		errorTracker.put(server.get_error_pk(), (False, err))
 		return
 
-	if checkAddress:
+	if server.ip == server.address:
+		server.verifyLevel = 3
+	else:
 		addresses = set(data[4][0] for data in info)
 		have_v4 = any(d[0] == socket.AF_INET for d in info)
 		have_v6 = any(d[0] == socket.AF_INET6 for d in info)
 		if server.ip in addresses:
-			pass
+			server.verifyLevel = 3
 		elif (":" in server.ip and not have_v6) or ("." in server.ip and not have_v4):
 			# If the client is ipv6 and there is no ipv6 on the domain (or the inverse)
 			# then the check cannot possibly ever succeed.
 			# Because this often happens accidentally just tolerate it.
-			pass
+			server.verifyLevel = 2
 		else:
 			err = "Requester IP %s does not match host %s" % (server.ip, server.address)
 			if isDomain(server.address):
@@ -432,6 +433,14 @@ def asyncFinishThread(server: 'Server'):
 			app.logger.warning(err)
 			# handle as warning
 			errorTracker.put(server.get_error_pk(), (True, err))
+			server.verifyLevel = 1
+
+	# do this here since verifyLevel is now set
+	if serverList.checkDuplicate(server):
+		err = "Server %s port %d already exists on the list" % (server.address, server.port)
+		app.logger.warning(err)
+		errorTracker.put(server.get_error_pk(), (False, err))
+		return
 
 	geo = geoip_lookup_continent(info[-1][4][0])
 	if geo:
@@ -453,7 +462,7 @@ def asyncFinishThread(server: 'Server'):
 
 # represents a single server on the list
 class Server:
-	PROPS = ("startTime", "updateCount", "updateTime", "totalClients")
+	PROPS = ("startTime", "updateCount", "updateTime", "totalClients", "verifyLevel")
 
 	def __init__(self, ip: str, port: str, address: str, meta: dict):
 		# IP of announce requester (PRIMARY KEY)
@@ -472,6 +481,8 @@ class Server:
 		self.updateTime = 0
 		# total clients counted over all updates
 		self.totalClients = 0
+		# how well the IP verification was passed (bigger is better)
+		self.verifyLevel = 0
 
 	# creates an instance from the data of an announce request
 	@classmethod
@@ -543,6 +554,17 @@ class Server:
 			self.updateCount = 1
 			self.meta["clients_top"] = self.totalClients = self.meta["clients"]
 
+	# check if this server is a logical duplicate of the other one.
+	def is_duplicate(self, other: 'Server'):
+		if self.port == other.port and self.address.lower() == other.address.lower():
+			# if everything matches it's not a duplicate but literally the same
+			if self.ip == other.ip:
+				return False
+			# we have a duplicate but the more trusted one gets to stay
+			return self.verifyLevel < other.verifyLevel
+		return False
+
+
 # Represents an ordered list of server instances as well as methods
 # to persist it.
 class ServerList:
@@ -566,6 +588,13 @@ class ServerList:
 	def get(self, ip, port):
 		i, server = self.getWithIndex(ip, port)
 		return server
+
+	def checkDuplicate(self, other_server):
+		with self.lock:
+			for server in self.list:
+				if server.is_duplicate(other_server):
+					return True
+		return False
 
 	def remove(self, server):
 		with self.lock:
