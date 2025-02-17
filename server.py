@@ -526,6 +526,7 @@ class Server:
 
 	def get_average_clients(self):
 		if self.updateCount:
+			# FIXME: this is quite biased to servers that are new (or restart often)
 			return round(self.totalClients / self.updateCount)
 		return 0
 
@@ -582,7 +583,7 @@ class Server:
 		# Popularity
 		if old:
 			self.updateCount = old.updateCount + 1
-			self.totalClients += self.meta["clients"]
+			self.totalClients = old.totalClients + self.meta["clients"]
 			self.meta["clients_top"] = max(self.meta["clients"], old.meta["clients_top"])
 		else:
 			self.updateCount = 1
