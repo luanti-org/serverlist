@@ -9,6 +9,7 @@ from glob import glob
 import maxminddb
 from flask import Flask, request, send_from_directory, make_response
 
+LIST_SAVE_INTERVAL = 5
 
 app = Flask(__name__, static_url_path = "")
 
@@ -75,7 +76,7 @@ def index():
 def list_json():
 	# We have to make sure that the list isn't cached for too long,
 	# since it isn't really static.
-	return send_from_directory(app.static_folder, "list.json", max_age=20)
+	return send_from_directory(app.static_folder, "list.json", max_age=LIST_SAVE_INTERVAL)
 
 
 @app.route("/geoip")
@@ -607,10 +608,10 @@ class ServerList:
 		self.maxClients = 0
 		self.storagePath = os.path.join(app.root_path, "store.json")
 		self.publicPath = os.path.join(app.static_folder, "list.json")
+		self.modified = True
 		self.lock = RLock()
 
 		self.load()
-		self.purgeOld()
 
 	def getWithIndex(self, ip, port):
 		with self.lock:
@@ -636,8 +637,7 @@ class ServerList:
 				self.list.remove(server)
 			except ValueError:
 				return
-			self.save()
-			self.savePublic()
+			self.modified = True
 
 	def purgeOld(self):
 		cutoff = int(time.time()) - app.config["PURGE_TIME"]
@@ -645,8 +645,7 @@ class ServerList:
 			count = len(self.list)
 			self.list = [server for server in self.list if cutoff <= server.updateTime]
 			if len(self.list) < count:
-				self.save()
-				self.savePublic()
+				self.modified = True
 
 	def load(self):
 		# TODO?: this is a poor man's database. maybe we should use sqlite3?
@@ -664,8 +663,20 @@ class ServerList:
 			self.maxServers = data["maxServers"]
 			self.maxClients = data["maxClients"]
 
+			# rewrite once in case writing format or so changed
+			self.modified = True
+
 	def save(self):
 		with self.lock:
+			self._saveStorage()
+			self._savePublic()
+			self.modified = False
+
+	def _saveStorage(self):
+		with self.lock:
+			if not self.modified:
+				return
+
 			out_list = list(server.to_storage() for server in self.list)
 			dumpJsonToFile(self.storagePath, {
 				"list": out_list,
@@ -673,8 +684,11 @@ class ServerList:
 				"maxClients": self.maxClients
 			})
 
-	def savePublic(self):
+	def _savePublic(self):
 		with self.lock:
+			if not self.modified and os.path.exists(self.publicPath):
+				return
+
 			# sort, but don't modify internal list
 			sorted_list = sorted(self.list,
 				key=(lambda server: server.get_score()), reverse=True)
@@ -702,9 +716,7 @@ class ServerList:
 				self.list[i] = server
 			else:
 				self.list.append(server)
-
-			self.save()
-			self.savePublic()
+			self.modified = True
 
 
 class ErrorTracker:
@@ -735,14 +747,20 @@ class ErrorTracker:
 			self.table = table
 
 
-class PurgeThread(Thread):
+class TimerThread(Thread):
 	def __init__(self):
-		Thread.__init__(self, daemon=True)
+		super().__init__(name="TimerThread", daemon=True)
 	def run(self):
+		next_cleanup = 0
 		while True:
-			time.sleep(60)
-			serverList.purgeOld()
-			errorTracker.cleanup()
+			time.sleep(max(1, LIST_SAVE_INTERVAL))
+
+			if time.monotonic() >= next_cleanup:
+				serverList.purgeOld()
+				errorTracker.cleanup()
+				next_cleanup = time.monotonic() + 60
+
+			serverList.save()
 
 
 # Globals / Startup
@@ -751,7 +769,7 @@ serverList = ServerList()
 
 errorTracker = ErrorTracker()
 
-PurgeThread().start()
+TimerThread().start()
 
 if __name__ == "__main__":
 	app.run(host = app.config["HOST"], port = app.config["PORT"])
