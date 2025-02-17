@@ -528,6 +528,39 @@ class Server:
 			return round(self.totalClients / self.updateCount)
 		return 0
 
+	# calculate score for server list ranking (higher values first)
+	def get_score(self):
+		points = 0
+		meta = self.meta
+
+		# 1 per client
+		points += meta["clients"]
+
+		# Penalize highly loaded servers to improve player distribution
+		cap = int(meta["clients_max"] * 0.80)
+		if meta["clients"] > cap:
+			points -= meta["clients"] - cap
+
+		# 1 per month of age, limited to 8
+		points += min(8, meta["game_time"] / (60*60*24*30))
+
+		# 1/2 per average client, limited to 4
+		points += min(4, self.get_average_clients() / 2)
+
+		# -8 for unrealistic max_clients
+		if meta["clients_max"] > 200:
+			points -= 8
+
+		# -8 per second of ping over 0.4s
+		if meta["ping"] > 0.4:
+			points -= (meta["ping"] - 0.4) * 8
+
+		# reduction to 60% for servers that support both legacy (v4) and v5 clients
+		if meta["proto_min"] <= 32 and meta["proto_max"] > 36:
+			points *= 0.6
+
+		return points
+
 	def track_update(self, old: 'Server', is_update: bool):
 		# this might look a bit strange, but once a `Server` object is put into
 		# list it becomes immutable since it's under lock. So we have to copy
@@ -575,6 +608,7 @@ class ServerList:
 		self.storagePath = os.path.join(app.root_path, "store.json")
 		self.publicPath = os.path.join(app.static_folder, "list.json")
 		self.lock = RLock()
+
 		self.load()
 		self.purgeOld()
 
@@ -604,42 +638,6 @@ class ServerList:
 				return
 			self.save()
 			self.savePublic()
-
-	def sort(self):
-		def server_points(server: Server):
-			points = 0
-			meta = server.meta
-
-			# 1 per client
-			points += meta["clients"]
-
-			# Penalize highly loaded servers to improve player distribution.
-			cap = int(meta["clients_max"] * 0.80)
-			if meta["clients"] > cap:
-				points -= meta["clients"] - cap
-
-			# 1 per month of age, limited to 8
-			points += min(8, meta["game_time"] / (60*60*24*30))
-
-			# 1/2 per average client, limited to 4
-			points += min(4, server.get_average_clients() / 2)
-
-			# -8 for unrealistic max_clients
-			if meta["clients_max"] > 200:
-				points -= 8
-
-			# -8 per second of ping over 0.4s
-			if meta["ping"] > 0.4:
-				points -= (meta["ping"] - 0.4) * 8
-
-			# reduction to 60% for servers that support both legacy (v4) and v5 clients
-			if meta["proto_min"] <= 32 and meta["proto_max"] > 36:
-				points *= 0.6
-
-			return points
-
-		with self.lock:
-			self.list.sort(key=server_points, reverse=True)
 
 	def purgeOld(self):
 		cutoff = int(time.time()) - app.config["PURGE_TIME"]
@@ -677,10 +675,14 @@ class ServerList:
 
 	def savePublic(self):
 		with self.lock:
+			# sort, but don't modify internal list
+			sorted_list = sorted(self.list,
+				key=(lambda server: server.get_score()), reverse=True)
+
 			out_list = []
-			servers = len(self.list)
+			servers = len(sorted_list)
 			clients = 0
-			for server in self.list:
+			for server in sorted_list:
 				out_list.append(server.to_list_json())
 				clients += server.meta["clients"]
 
@@ -701,7 +703,6 @@ class ServerList:
 			else:
 				self.list.append(server)
 
-			self.sort()
 			self.save()
 			self.savePublic()
 
