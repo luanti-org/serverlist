@@ -589,7 +589,7 @@ class Server:
 			self.updateCount = 1
 			self.meta["clients_top"] = self.totalClients = self.meta["clients"]
 
-	# check if this server is a logical duplicate of the other one.
+	# check if *this* server is a logical duplicate of the other one
 	def is_duplicate(self, other: 'Server'):
 		if self.port == other.port and self.address.lower() == other.address.lower():
 			# if everything matches it's not a duplicate but literally the same
@@ -625,10 +625,11 @@ class ServerList:
 		i, server = self.getWithIndex(ip, port)
 		return server
 
-	def checkDuplicate(self, other_server):
+	# returns true if the given server shouldn't be on the list
+	def checkDuplicate(self, other_server: Server):
 		with self.lock:
 			for server in self.list:
-				if server.is_duplicate(other_server):
+				if other_server.is_duplicate(server):
 					return True
 		return False
 
