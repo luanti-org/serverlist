@@ -79,6 +79,18 @@ def list_json():
 	return send_from_directory(app.static_folder, "list.json", max_age=LIST_SAVE_INTERVAL)
 
 
+@app.route("/server/<string:ip>/<int:port>")
+def get_server(ip, port):
+    try:
+        server = serverList.get(ip, port)
+        if server:
+            return server
+        else:
+            return "Server not found", 404
+    except ValueError as e:
+        return str(e), 400
+
+
 @app.route("/geoip")
 def geoip():
 	continent = geoip_lookup_continent(request.remote_addr)
