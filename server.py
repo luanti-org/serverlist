@@ -366,14 +366,16 @@ def checkRequest(req):
 			any(c in url for c in BAD_CHARS):
 			del req["url"]
 
-	# reject funny business in client or mod list
+	# sort and check client/mod list
 	if "clients_list" in req:
-		req["clients"] = len(req["clients_list"])
+		req["clients_list"] = sorted(set(req["clients_list"]))
 		for val in req["clients_list"]:
 			if not val or any(c in val for c in BAD_CHARS):
 				return False
+		req["clients"] = len(req["clients_list"])
 
 	if "mods" in req:
+		req["mods"] = sorted(set(req["mods"]))
 		for val in req["mods"]:
 			if not val or any(c in val for c in BAD_CHARS):
 				return False
