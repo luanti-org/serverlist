@@ -166,6 +166,8 @@ def announce():
 		err = checkRequestAddress(server)
 		if err:
 			return ADDR_ERROR_HELP_TEXTS[err], 400
+	if action == "update" and old.meta["uptime"] > server.meta["uptime"]:
+		return "Detected non-monotonic uptime.", 400
 
 	server.track_update(old, action == "update")
 
@@ -475,7 +477,7 @@ def logChangedServer(old: 'Server', new: 'Server'):
 		app.logger.info("New server added: %s", new.to_string())
 		return
 	if not new: # Note that this only covers explicit removals, not expiry
-		app.logger.info("Server was removed: %s", old.to_string())
+		app.logger.info("Server was deleted: %s", old.to_string())
 		return
 	if old.address != new.address or old.meta.get("name") != new.meta.get("name"):
 		app.logger.info("Server changed: %s", new.to_string())
