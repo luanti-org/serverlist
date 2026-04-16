@@ -3,6 +3,7 @@ import os
 import json
 import time
 import socket
+import logging
 from threading import Thread, RLock
 from glob import glob
 
@@ -28,6 +29,10 @@ else:
 		".mmdb file in the app root folder."
 	)
 	reader = None
+
+# Make sure INFO logs are visible
+if app.logger.level != logging.DEBUG:
+	app.logger.setLevel(logging.INFO)
 
 # Helpers
 
@@ -140,6 +145,7 @@ def announce():
 		if not old:
 			return "Server not found."
 		serverList.remove(old)
+		logChangedServer(old, None)
 		return "Removed from server list."
 
 	if not checkRequestSchema(req):
@@ -412,7 +418,7 @@ def asyncFinishThread(server: 'Server'):
 			proto=socket.SOL_UDP)
 	except socket.gaierror:
 		err = "Unable to get address info for %s" % server.address
-		app.logger.warning(err)
+		app.logger.warning("%s (IP: %s)", err, server.ip)
 		errorTracker.put(server.get_error_pk(), (False, err))
 		return
 
@@ -441,7 +447,7 @@ def asyncFinishThread(server: 'Server'):
 	# do this here since verifyLevel is now set
 	if serverList.checkDuplicate(server):
 		err = "Server %s port %d already exists on the list" % (server.address, server.port)
-		app.logger.warning(err)
+		app.logger.warning("%s (IP: %s)", err, server.ip)
 		errorTracker.put(server.get_error_pk(), (False, err))
 		return
 
@@ -460,8 +466,22 @@ def asyncFinishThread(server: 'Server'):
 	server.meta["ping"] = round(ping, 5)
 
 	# success!
-	serverList.update(server)
+	old = serverList.update(server)
+	logChangedServer(old, server)
 
+
+def logChangedServer(old: 'Server', new: 'Server'):
+	if not old:
+		app.logger.info("New server added: %s", new.to_string())
+		return
+	if not new: # Note that this only covers explicit removals, not expiry
+		app.logger.info("Server was removed: %s", old.to_string())
+		return
+	if old.address != new.address or old.meta.get("name") != new.meta.get("name"):
+		app.logger.info("Server changed: %s", new.to_string())
+	if abs(old.meta["clients"] - new.meta["clients"]) >= 9:
+		app.logger.info("Player movement: %s (old: %dP)", new.to_string(),
+			old.meta["clients"])
 
 # represents a single server on the list
 class Server:
@@ -518,6 +538,13 @@ class Server:
 		ret["address"] = self.address
 		ret["port"] = self.port
 		ret["pop_v"] = self.get_average_clients()
+		return ret
+
+	# Logging-suitable representation that has the most essential information
+	def to_string(self):
+		ret = "%s/%d %r %r" % (self.ip, self.port, self.address, self.meta.get("name"))
+		if self.meta["clients"] > 0:
+			ret += " (%dP)" % self.meta["clients"]
 		return ret
 
 	# returns a primary key suitable for saving and replaying an error unique to a
@@ -721,6 +748,7 @@ class ServerList:
 			else:
 				self.list.append(server)
 			self.modified = True
+		return old
 
 
 class ErrorTracker:
