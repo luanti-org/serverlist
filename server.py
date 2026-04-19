@@ -211,7 +211,7 @@ def serverUp(info):
 		# send packet of type ORIGINAL, with no data
 		#     this should prompt the server to assign us a peer id
 		# [0] u32       protocol_id (PROTOCOL_ID)
-		# [4] session_t sender_peer_id (PEER_ID_INEXISTENT)
+		# [4] u16       sender_peer_id (PEER_ID_INEXISTENT)
 		# [6] u8        channel
 		# [7] u8        type (PACKET_TYPE_ORIGINAL)
 		buf = b"\x4f\x45\x74\x03\x00\x00\x00\x01"
@@ -220,22 +220,22 @@ def serverUp(info):
 		# receive reliable packet of type CONTROL, subtype SET_PEER_ID,
 		#     with our assigned peer id as data
 		# [0] u32        protocol_id (PROTOCOL_ID)
-		# [4] session_t  sender_peer_id
+		# [4] u16        sender_peer_id (PEER_ID_SERVER)
 		# [6] u8         channel
 		# [7] u8         type (PACKET_TYPE_RELIABLE)
 		# [8] u16        seqnum
 		# [10] u8        type (PACKET_TYPE_CONTROL)
 		# [11] u8        controltype (CONTROLTYPE_SET_PEER_ID)
-		# [12] session_t peer_id_new
+		# [12] u16       peer_id_new
 		data = sock.recv(1024)
 		end = time.monotonic()
-		if not data:
+		if data[0:4] != b"\x4f\x45\x74\x03" or data[4:6] != b"\x00\x01" or data[11] != 0x01:
 			return False
 		peer_id = data[12:14]
 		# send packet of type CONTROL, subtype DISCO,
 		#     to cleanly close our server connection
 		# [0] u32       protocol_id (PROTOCOL_ID)
-		# [4] session_t sender_peer_id
+		# [4] u16       sender_peer_id
 		# [6] u8        channel
 		# [7] u8        type (PACKET_TYPE_CONTROL)
 		# [8] u8        controltype (CONTROLTYPE_DISCO)
