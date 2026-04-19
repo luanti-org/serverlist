@@ -4,6 +4,7 @@ import json
 import time
 import socket
 import logging
+import ipaddress
 from threading import Thread, RLock
 from glob import glob
 
@@ -190,7 +191,8 @@ def announce():
 
 # check if something is a domain name (approximate)
 def isDomain(s):
-	return "." in s and s.rpartition(".")[2][0].isalpha()
+	a, _, b = s.rpartition(".")
+	return a and b and b[0].isalpha()
 
 # Safely writes JSON data to a file
 def dumpJsonToFile(filename, data):
@@ -255,7 +257,6 @@ def serverUp(info):
 def checkRequestAddress(server):
 	name = server.address.lower()
 
-	# example value from minetest.conf
 	EXAMPLE_TLDS = (".example.com", ".example.net", ".example.org")
 	if name == "game.minetest.net" or any(name.endswith(s) for s in EXAMPLE_TLDS):
 		return ADDR_IS_EXAMPLE
@@ -266,20 +267,24 @@ def checkRequestAddress(server):
 	# characters invalid in DNS names and IPs
 	if any(c in name for c in " @#/*\"'\t\v\r\n\x00") or name.startswith("-"):
 		return ADDR_IS_INVALID
-	# if not ipv6, there must be at least one dot (two components)
-	# Note: This is not actually true ('com' is valid domain), but we'll assume
-	#       nobody who owns a TLD will ever host a Luanti server on the root domain.
-	#       getaddrinfo also allows specifying IPs as integers, we don't want people
-	#       to do that either.
-	if ":" not in name and "." not in name:
-		return ADDR_IS_INVALID
 
-	if app.config["REJECT_PRIVATE_ADDRESSES"]:
-		# private IPs (there are more but in practice these are 99% of cases)
-		PRIVATE_NETS = ("10.", "192.168.", "127.", "0.")
-		if any(name.startswith(s) for s in PRIVATE_NETS):
+	# Note: The following checks will reject hostnames without a dot,
+	#       as well as IPv4 shorthands like '127.1' or '2130706433' that
+	#       getaddrinfo understands. This is intentional.
+	if isDomain(name):
+		pass
+	else:
+		try:
+			parsed = ipaddress.ip_address(name)
+		except ValueError:
+			return ADDR_IS_INVALID
+		if parsed.is_multicast or parsed.is_link_local: # these are never valid
+			return ADDR_IS_INVALID
+		if app.config["REJECT_PRIVATE_ADDRESSES"] and not parsed.is_global:
 			return ADDR_IS_PRIVATE
-		# reserved TLDs
+
+	# reserved TLDs
+	if app.config["REJECT_PRIVATE_ADDRESSES"]:
 		RESERVED_TLDS = (".localhost", ".local", ".internal")
 		if name == "localhost" or any(name.endswith(s) for s in RESERVED_TLDS):
 			return ADDR_IS_PRIVATE
