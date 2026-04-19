@@ -143,7 +143,7 @@ def announce():
 
 	if action == "delete":
 		if not old:
-			return "Server not found."
+			return "Server to remove not found."
 		serverList.remove(old)
 		logChangedServer(old, None)
 		return "Removed from server list."
@@ -178,11 +178,11 @@ def announce():
 	if err:
 		warn, text = err
 		if warn:
-			text = ("Request has been filed and the previous one was successful, "
-				"but take note:\n" + text)
+			text = ("Request has been filed, but there is a warning from "
+				"the previous one:\n" + text)
 		else:
-			text = ("Request has been filed, "
-				"but the previous request encountered the following error:\n" + text)
+			text = ("Request has been filed, but the previous one "
+				"encountered an error:\n" + text)
 		return text, 409
 	return "Request has been filed.", 202
 

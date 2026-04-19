@@ -9,8 +9,8 @@ PORT = 5000
 
 # Amount of time, is seconds, after which servers are removed from the list
 # if they haven't updated their listings.  Note: By default Luanti servers
-# only announce once every 5 minutes, so this should be more than 300.
-PURGE_TIME = 350
+# only announce once every 5 minutes, so this must be more than 300.
+PURGE_TIME = 330
 
 # List of banned IP addresses for announce
 # e.g. ['2620:101::44']
@@ -21,8 +21,8 @@ BANNED_IPS = []
 BANNED_SERVERS = []
 
 # Creates server entries if a server sends an 'update' and there is no entry yet.
-# This should only be used to populate the server list after list.json was deleted.
-# This WILL cause problems such as mapgen, mods and privilege information missing from the list
+# This should only be used to populate the server list after store.json was deleted.
+# This WILL cause data such as mods, privs or mapgen to be missing from such servers.
 ALLOW_UPDATE_WITHOUT_OLD = False
 
 # Reject servers with private addresses and domain names.

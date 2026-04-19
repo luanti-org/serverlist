@@ -5,7 +5,7 @@ Setting up the webpage
 ----------------------
 
 You will have to install node.js, doT.js and their dependencies to compile
-the server list webpage template.
+the template files.
 
 First install node.js, e.g.:
 
@@ -86,8 +86,10 @@ yum install uwsgi uwsgi-plugin-python3
   5. Start the server:
 
 ```sh
+# For development
 ./server.py
-# Or for production:
+
+# For production:
 uwsgi -s /run/serverlist.sock --plugins python3 -w server:app -T --threads 2
 # then configure according to https://flask.palletsprojects.com/en/stable/deploying/uwsgi/
 ```
@@ -96,7 +98,7 @@ uwsgi -s /run/serverlist.sock --plugins python3 -w server:app -T --threads 2
 	 load static files directly from the static directory.  Also, `/list`
 	 should be served from `list.json`.  Example for nginx:
 
-```sh
+```nginx
 root /path/to/server/static;
 
 rewrite ^/$ /index.html break;
@@ -117,7 +119,7 @@ Setting up the server (Apache version)
 If you wish to use Apache to host the server list, do steps 1-2, 4, above.
 Additionally install/enable mod_wsgi and an Apache site config like the following:
 
-```sh
+```ini
 # This config assumes you have the server list at DocumentRoot.
 # Visitors to the server list in this config would visit http://local.server/ and
 # apache would serve up the output from server.py.
