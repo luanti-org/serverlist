@@ -109,7 +109,7 @@ def announce():
 
 	json_data = request.form["json"]
 	if len(json_data) > 8192:
-		return "JSON data is too big.", 413
+		return "JSON data is too big (%d)." % len(json_data), 413
 
 	try:
 		req = json.loads(json_data)
