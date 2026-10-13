@@ -12,6 +12,9 @@ PORT = 5000
 # only announce once every 5 minutes, so this must be more than 300.
 PURGE_TIME = 330
 
+# Minimum protocol version to require for announced servers
+REQUIRE_MIN_PROTO = 37
+
 # List of banned IP addresses for announce
 # e.g. ['2620:101::44']
 BANNED_IPS = []

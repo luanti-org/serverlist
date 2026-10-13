@@ -154,6 +154,10 @@ def announce():
 	elif not checkRequest(req):
 		return "Incorrect JSON data.", 400
 
+	if req["proto_max"] < app.config["REQUIRE_MIN_PROTO"]:
+		return "Your server is too old to use the public server list.", 422
+	req["proto_min"] = max(req["proto_min"], app.config["REQUIRE_MIN_PROTO"])
+
 	if action == "update" and not old:
 		if app.config["ALLOW_UPDATE_WITHOUT_OLD"] and req["uptime"] > 0:
 			action = "start"
