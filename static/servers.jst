@@ -4,12 +4,6 @@
 		Players: {{=it.total.clients}}/{{=it.total_max.clients}}&nbsp;
 		Servers: {{=it.total.servers}}/{{=it.total_max.servers}}
 	</span>
-	{{? master.show_proto_select}}
-	, Protocol: <select class="proto_select">
-		<option value="">All</option>
-		<option value="[11,32]" {{? master.proto_range=='[11,32]'}}selected{{?}}>11-32 (0.4 series)</option>
-		<option value="[37,99]" {{? master.proto_range=='[37,99]'}}selected{{?}}>37+ (5.0 or newer)</option>
-	</select>{{?}}
 </div>
 {{?}}
 <table>

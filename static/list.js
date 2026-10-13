@@ -91,27 +91,8 @@ master.draw = function(json) {
 	if (json == null)
 		return;
 
-	// pre-filter by chosen protocol range
-	var tmp = master.proto_range ? JSON.parse(master.proto_range) : null;
-	if (tmp) {
-		json = {
-			list: json.list.filter(function(server) {
-				return !(tmp[0] > server.proto_max || tmp[1] < server.proto_min);
-			}),
-			total: {clients: 0},
-			total_max: {clients: "?", servers: "?"}
-		};
-		json.list.forEach(function(server) { json.total.clients += server.clients; });
-		json.total.servers = json.list.length;
-	}
-
 	var html = window.render.servers(json);
 	jQuery('#server_list').html(html);
-
-	jQuery('.proto_select', '#server_list').on('change', function(e) {
-		master.proto_range = e.target.value;
-		master.draw(master.cached_json); // re-render
-	});
 };
 
 master.get = function() {
