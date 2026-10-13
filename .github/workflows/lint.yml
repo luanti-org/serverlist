@@ -15,9 +15,9 @@ jobs:
   pylint:
     runs-on: ubuntu-latest
     container:
-      image: python:3.11-slim
+      image: python:3.14-slim
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - name: Install deps
         run: |
           pip install -r requirements.txt
